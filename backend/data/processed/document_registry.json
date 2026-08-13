@@ -1,0 +1,19 @@
+{
+  "9b108487-118f-486f-abeb-0a42edb2d37f": {
+    "document_id": "9b108487-118f-486f-abeb-0a42edb2d37f",
+    "source_path": "C:\\Users\\dasan\\OneDrive\\Desktop\\hallucination-detection-system-person3-updated\\backend\\data\\uploads\\6a0fb6c0d63c453684985cbf11c32bf9_india_capital_evidence.txt",
+    "raw_text": "The capital of India is New Delhi.\nIndia is a country in South Asia.\nNew Delhi is the capital city of India.\n",
+    "cleaned_text": "The capital of India is New Delhi.\nIndia is a country in South Asia.\nNew Delhi is the capital city of India.",
+    "metadata": {
+      "original_filename": "6a0fb6c0d63c453684985cbf11c32bf9_india_capital_evidence.txt",
+      "file_type": "txt",
+      "file_size_bytes": 109,
+      "page_count": null,
+      "author": null,
+      "title": null,
+      "created_at": null,
+      "extra": {}
+    },
+    "status": "indexed"
+  }
+}

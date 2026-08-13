@@ -1,0 +1,122 @@
+"""
+FastAPI Application Entrypoint
+=================================
+
+Bootstraps the Hallucination Detection System API:
+
+* Configures structured logging before anything else runs.
+* Builds the FastAPI ``app`` instance from centralized settings.
+* Pre-warms the NLP pipeline (spaCy models used by ``ClaimExtractor`` and
+  ``HallucinationDetector``) at startup via a lifespan hook, so the first
+  real request isn't penalized with multi-second model-load latency.
+* Registers the ``/analyze`` router (Person 1) and the ``/documents``,
+  ``/retrieval``, and ``/verification`` routers (Person 2).
+* Installs global exception handlers so unhandled errors and validation
+  failures return a consistent, structured JSON error shape instead of
+  leaking stack traces.
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from typing import Any
+
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+from app.api.analysis import get_response_analyzer, router as analysis_router
+from app.api.routes.documents import router as documents_router
+from app.api.routes.retrieval import router as retrieval_router
+from app.api.routes.verification import router as verification_router
+from app.core.config import settings
+from app.core.logging import logger, setup_logging
+
+# Configure logging before any other module-level work happens.
+setup_logging()
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
+    """
+    Application lifespan hook.
+
+    Pre-warms the ``ResponseAnalyzer`` (and, transitively, the spaCy
+    pipelines it depends on) at startup so the first incoming request does
+    not pay the multi-second model-loading cost.
+    """
+    logger.info("Starting up %s v%s...", settings.APP_NAME, settings.APP_VERSION)
+    try:
+        get_response_analyzer()
+        logger.info("NLP pipelines pre-warmed successfully.")
+    except Exception:  # noqa: BLE001 - startup pre-warm is best-effort
+        logger.exception(
+            "Failed to pre-warm NLP pipelines at startup; they will be "
+            "loaded lazily on first request instead."
+        )
+
+    yield
+
+    logger.info("Shutting down %s.", settings.APP_NAME)
+
+
+app = FastAPI(
+    title=settings.APP_NAME,
+    version=settings.APP_VERSION,
+    debug=settings.DEBUG,
+    lifespan=lifespan,
+)
+
+app.include_router(analysis_router, prefix=settings.API_PREFIX)
+app.include_router(documents_router)
+app.include_router(retrieval_router)
+app.include_router(verification_router)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """Return a structured 422 response for request payload validation failures."""
+    logger.warning("Validation error on %s %s: %s", request.method, request.url.path, exc.errors())
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "error": "validation_error",
+            "detail": exc.errors(),
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """
+    Catch-all handler for any exception not already converted into an
+    ``HTTPException`` upstream. Prevents raw stack traces from leaking to
+    clients while still logging full details server-side.
+    """
+    logger.exception("Unhandled exception on %s %s.", request.method, request.url.path)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "error": "internal_server_error",
+            "detail": "An unexpected error occurred. Please try again later.",
+        },
+    )
+
+
+@app.get("/", tags=["Meta"])
+def root() -> dict[str, Any]:
+    """Root endpoint providing basic service metadata."""
+    return {
+        "message": "Welcome to the Hallucination Detection System API",
+        "version": settings.APP_VERSION,
+        "docs_url": "/docs",
+    }
+
+
+@app.get("/health", tags=["Meta"])
+def health_check() -> dict[str, str]:
+    """Liveness/readiness probe endpoint."""
+    return {"status": "healthy"}
