@@ -11,3 +11,7 @@ __pycache__/
 
 # VS Code
 .vscode/
+# Backend virtual environment
+backend/venv/
+# ChromaDB runtime data
+backend/data/chroma/
