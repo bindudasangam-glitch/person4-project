@@ -1,12 +1,12 @@
 """
-Bootstraps the Hallucination Detection System API.
+Lightweight bootstrap for the Hallucination Detection System API.
 
-- Configures structured logging before anything else runs.
-- Builds the FastAPI app instance from centralized settings.
-- Loads NLP/embedding models lazily only when actually needed.
-- Registers all API routers.
-- Installs global exception handlers.
-- Enables CORS for the React/Vite frontend.
+IMPORTANT:
+- Keeps startup extremely lightweight for Render Free (512 MB).
+- Does NOT import heavy API routers during startup.
+- Does NOT load spaCy, SentenceTransformer, Chroma, Torch, etc.
+- Provides / and /health immediately.
+- API routers can be re-enabled later after the service is Live.
 """
 
 from __future__ import annotations
@@ -20,17 +20,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.analysis import router as analysis_router
-from app.api.routes.documents import router as documents_router
-from app.api.routes.retrieval import router as retrieval_router
-from app.api.routes.verification import router as verification_router
-from app.api.routes.voice import router as voice_router
 from app.core.config import settings
 from app.core.logging import logger, setup_logging
 
 
 # -------------------------------------------------------------------
-# Logging configuration
+# Logging
 # -------------------------------------------------------------------
 
 setup_logging()
@@ -43,15 +38,11 @@ setup_logging()
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
     """
-    Application lifespan hook.
+    Lightweight application startup.
 
     IMPORTANT:
-    NLP, embedding, spaCy, SentenceTransformer, and vector-store
-    components are NOT loaded during application startup.
-
-    They are initialized lazily only when an endpoint actually needs
-    them. This keeps startup memory usage low and helps the application
-    run on Render's 512 MB Free instance.
+    Do not load any ML, NLP, embedding, vector-store, or router
+    dependencies during startup.
     """
 
     logger.info(
@@ -60,10 +51,15 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
         settings.APP_VERSION,
     )
 
-    # Do NOT initialize ResponseAnalyzer here.
-    # Do NOT load SentenceTransformer here.
-    # Do NOT load spaCy models here.
-    # Do NOT preload Chroma here.
+    # Intentionally empty.
+    #
+    # DO NOT initialize:
+    # - SentenceTransformer
+    # - spaCy
+    # - Chroma
+    # - Torch
+    # - ResponseAnalyzer
+    # - document/retrieval/verification services
 
     yield
 
@@ -86,21 +82,8 @@ app = FastAPI(
 
 
 # -------------------------------------------------------------------
-# CORS configuration
+# CORS
 # -------------------------------------------------------------------
-
-# Local development:
-#   http://localhost:5173
-#   http://localhost:5174
-#   http://localhost:5175
-#   etc.
-#
-#   http://127.0.0.1:5173
-#   http://127.0.0.1:5174
-#   etc.
-#
-# Production frontend can be added later through an environment
-# variable if required.
 
 app.add_middleware(
     CORSMiddleware,
@@ -112,29 +95,54 @@ app.add_middleware(
 
 
 # -------------------------------------------------------------------
-# API Routers
+# IMPORTANT
+# -------------------------------------------------------------------
+#
+# API routers are intentionally DISABLED for the first Render deploy.
+#
+# The previous version imported:
+#
+#   app.api.analysis
+#   app.api.routes.documents
+#   app.api.routes.retrieval
+#   app.api.routes.verification
+#   app.api.routes.voice
+#
+# Some of those modules can import heavy ML/vector dependencies.
+#
+# That causes Render to spend too much time/memory before opening
+# the HTTP port.
+#
+# We will re-enable them one at a time AFTER /health works on Render.
+#
 # -------------------------------------------------------------------
 
-# Hallucination analysis
-app.include_router(
-    analysis_router,
-    prefix=settings.API_PREFIX,
-)
+# from app.api.analysis import router as analysis_router
+# from app.api.routes.documents import router as documents_router
+# from app.api.routes.retrieval import router as retrieval_router
+# from app.api.routes.verification import router as verification_router
+# from app.api.routes.voice import router as voice_router
 
-# Document management
-app.include_router(documents_router)
 
-# Evidence retrieval
-app.include_router(retrieval_router)
+# -------------------------------------------------------------------
+# Routers temporarily disabled
+# -------------------------------------------------------------------
 
-# Verification
-app.include_router(verification_router)
+# app.include_router(
+#     analysis_router,
+#     prefix=settings.API_PREFIX,
+# )
 
-# Voice feature
-app.include_router(
-    voice_router,
-    prefix=settings.API_PREFIX,
-)
+# app.include_router(documents_router)
+
+# app.include_router(retrieval_router)
+
+# app.include_router(verification_router)
+
+# app.include_router(
+#     voice_router,
+#     prefix=settings.API_PREFIX,
+# )
 
 
 # -------------------------------------------------------------------
@@ -147,8 +155,7 @@ async def validation_exception_handler(
     exc: RequestValidationError,
 ) -> JSONResponse:
     """
-    Return a structured 422 response for request payload
-    validation failures.
+    Return a structured 422 response for validation errors.
     """
 
     logger.warning(
@@ -177,10 +184,7 @@ async def unhandled_exception_handler(
     exc: Exception,
 ) -> JSONResponse:
     """
-    Catch-all handler for unexpected exceptions.
-
-    Prevents raw stack traces from being exposed to clients while
-    logging the complete exception on the server.
+    Catch unexpected exceptions without exposing stack traces.
     """
 
     logger.exception(
@@ -208,7 +212,7 @@ async def unhandled_exception_handler(
 @app.get("/", tags=["Meta"])
 def root() -> dict[str, Any]:
     """
-    Root endpoint providing basic service metadata.
+    Basic service metadata.
     """
 
     return {
@@ -219,15 +223,15 @@ def root() -> dict[str, Any]:
 
 
 # -------------------------------------------------------------------
-# Health check endpoint
+# Health check
 # -------------------------------------------------------------------
 
 @app.get("/health", tags=["Meta"])
 def health_check() -> dict[str, str]:
     """
-    Lightweight health check endpoint.
+    Lightweight health check.
 
-    This endpoint intentionally does not load any ML models.
+    This endpoint must NEVER load ML models.
     """
 
     return {
