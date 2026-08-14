@@ -1,15 +1,18 @@
 """
 Main FastAPI application for the Hallucination Detection System.
 
-The application keeps startup lightweight:
+Render / 512 MB friendly startup configuration.
+
+IMPORTANT:
 - No ML models are loaded during startup.
 - No ResponseAnalyzer is created during startup.
 - No SentenceTransformer model is loaded during startup.
 - No spaCy model is loaded during startup.
-- No vector-store data is preloaded during startup.
+- No Chroma/vector-store data is loaded during startup.
+- Only the analysis router is registered here.
+- Heavy dependencies are created only when /api/v1/analyze is called.
 
-Heavy components are initialized only when an API endpoint actually
-needs them.
+This keeps the Render Free instance as lightweight as possible.
 """
 
 from __future__ import annotations
@@ -27,25 +30,33 @@ from app.core.config import settings
 from app.core.logging import logger, setup_logging
 
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
+# ============================================================================
+# LOGGING
+# ============================================================================
 
 setup_logging()
 
 
-# ---------------------------------------------------------------------------
-# Application lifespan
-# ---------------------------------------------------------------------------
+# ============================================================================
+# APPLICATION LIFESPAN
+# ============================================================================
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
     """
-    Lightweight application startup.
+    Lightweight application lifespan.
 
-    IMPORTANT:
-    Do not initialize ResponseAnalyzer, Retriever, embeddings,
-    spaCy, SentenceTransformer, or Chroma here.
+    DO NOT initialize:
+    - ResponseAnalyzer
+    - Retriever
+    - SentenceTransformer
+    - spaCy
+    - Chroma
+    - embedding models
+    - voice/Whisper models
+
+    during startup.
     """
 
     logger.info(
@@ -62,9 +73,9 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
     )
 
 
-# ---------------------------------------------------------------------------
-# FastAPI application
-# ---------------------------------------------------------------------------
+# ============================================================================
+# FASTAPI APPLICATION
+# ============================================================================
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -74,9 +85,9 @@ app = FastAPI(
 )
 
 
-# ---------------------------------------------------------------------------
+# ============================================================================
 # CORS
-# ---------------------------------------------------------------------------
+# ============================================================================
 
 app.add_middleware(
     CORSMiddleware,
@@ -87,14 +98,18 @@ app.add_middleware(
 )
 
 
-# ---------------------------------------------------------------------------
-# Lightweight meta endpoints
-# ---------------------------------------------------------------------------
+# ============================================================================
+# META ENDPOINTS
+# ============================================================================
 
-@app.get("/", tags=["Meta"])
+
+@app.get(
+    "/",
+    tags=["Meta"],
+)
 def root() -> dict[str, Any]:
     """
-    Root endpoint.
+    Basic API information.
     """
 
     return {
@@ -105,11 +120,15 @@ def root() -> dict[str, Any]:
     }
 
 
-@app.get("/health", tags=["Meta"])
+@app.get(
+    "/health",
+    tags=["Meta"],
+)
 def health_check() -> dict[str, str]:
     """
     Lightweight health check.
 
+    IMPORTANT:
     This endpoint does not load any ML models.
     """
 
@@ -118,60 +137,38 @@ def health_check() -> dict[str, str]:
     }
 
 
-# ---------------------------------------------------------------------------
-# API routers
-# ---------------------------------------------------------------------------
+# ============================================================================
+# ANALYSIS ROUTER
+# ============================================================================
 
-# Import routers after the lightweight application has been created.
+# IMPORTANT:
+# We intentionally register ONLY the analysis router here.
 #
-# These imports register the routes but the actual ResponseAnalyzer,
-# Retriever, embedding models, spaCy models, etc. are still created
-# lazily when their endpoints are called.
+# The other routers can import heavy dependencies such as:
+# - embeddings
+# - vector stores
+# - NLP models
+# - voice/Whisper dependencies
+#
+# Loading all of them during Render startup can exceed the 512 MB
+# Free-instance memory limit.
+#
+# The analysis router itself creates ResponseAnalyzer lazily through
+# its FastAPI dependency when /api/v1/analyze is actually called.
 
 from app.api.analysis import router as analysis_router
-from app.api.routes.documents import router as documents_router
-from app.api.routes.retrieval import router as retrieval_router
-from app.api.routes.verification import router as verification_router
-from app.api.routes.voice import router as voice_router
 
 
-# Hallucination analysis:
-# /api/v1/analyze
 app.include_router(
     analysis_router,
     prefix=settings.API_PREFIX,
 )
 
 
-# Document management
-app.include_router(
-    documents_router,
-)
+# ============================================================================
+# VALIDATION ERROR HANDLER
+# ============================================================================
 
-
-# Evidence retrieval
-app.include_router(
-    retrieval_router,
-)
-
-
-# Verification
-app.include_router(
-    verification_router,
-)
-
-
-# Voice
-# /api/v1/...
-app.include_router(
-    voice_router,
-    prefix=settings.API_PREFIX,
-)
-
-
-# ---------------------------------------------------------------------------
-# Validation error handler
-# ---------------------------------------------------------------------------
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(
@@ -179,7 +176,7 @@ async def validation_exception_handler(
     exc: RequestValidationError,
 ) -> JSONResponse:
     """
-    Return a clean 422 response for invalid request data.
+    Return a structured 422 response for request validation errors.
     """
 
     logger.warning(
@@ -198,9 +195,10 @@ async def validation_exception_handler(
     )
 
 
-# ---------------------------------------------------------------------------
-# Global exception handler
-# ---------------------------------------------------------------------------
+# ============================================================================
+# GLOBAL EXCEPTION HANDLER
+# ============================================================================
+
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(
@@ -208,10 +206,10 @@ async def unhandled_exception_handler(
     exc: Exception,
 ) -> JSONResponse:
     """
-    Catch unexpected application errors.
+    Catch unexpected application exceptions.
 
-    The full exception is logged on the server while clients receive
-    a safe generic error message.
+    The complete exception is logged on the server.
+    Clients receive only a safe generic message.
     """
 
     logger.exception(
