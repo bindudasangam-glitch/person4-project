@@ -136,3 +136,4 @@ xxhash==3.8.1
 yarl==1.24.5
 zstandard==0.25.0
 py-rust-stemmers==0.1.8
+faster-whisper==1.2.1
