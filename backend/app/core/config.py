@@ -7,6 +7,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """
     Application configuration settings.
+
+    The configuration is intentionally lightweight so that importing the
+    settings module does not initialize any heavy ML or vector-store
+    dependencies.
     """
 
     model_config = SettingsConfigDict(
@@ -17,7 +21,10 @@ class Settings(BaseSettings):
     APP_NAME: str = "Hallucination Detection System"
     APP_VERSION: str = "1.0.0"
 
-    # Production/deployment mode.
+    # --------------------------------------------------------------------- #
+    # Production / deployment
+    # --------------------------------------------------------------------- #
+
     DEBUG: bool = False
 
     API_PREFIX: str = "/api/v1"
@@ -25,61 +32,90 @@ class Settings(BaseSettings):
     # --------------------------------------------------------------------- #
     # OpenAI / Voice Feature
     # --------------------------------------------------------------------- #
+
     openai_api_key: str | None = None
 
     # --------------------------------------------------------------------- #
-    # Document ingestion (Person 2)
+    # Document ingestion
     # --------------------------------------------------------------------- #
+
     UPLOAD_DIR: str = "data/uploads"
     PROCESSED_DIR: str = "data/processed"
 
     max_upload_size_mb: int = 20
 
     # --------------------------------------------------------------------- #
-    # Chunking (Person 2)
+    # Chunking
     # --------------------------------------------------------------------- #
+
     chunk_size: int = 500
     chunk_overlap: int = 50
 
     # --------------------------------------------------------------------- #
-    # Embedding (Person 2)
+    # Embedding
+    #
+    # IMPORTANT:
+    # We use FastEmbed/ONNX instead of SentenceTransformers/PyTorch.
+    # This substantially reduces the runtime memory footprint on Render.
     # --------------------------------------------------------------------- #
-    embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+
+    embedding_model_name: str = "BAAI/bge-small-en-v1.5"
+
+    # Kept for compatibility with the existing application configuration.
+    # FastEmbed uses ONNX Runtime and does not require a PyTorch device.
     embedding_device: str = "cpu"
 
-    # Small batch size to reduce peak memory usage on Render Free.
-    embedding_batch_size: int = 4
+    # Keep this deliberately small because Render Free has a 512 MB
+    # memory limit.
+    embedding_batch_size: int = 2
 
     # --------------------------------------------------------------------- #
-    # Vector store / ChromaDB (Person 2)
+    # Vector store / ChromaDB
     # --------------------------------------------------------------------- #
+
     CHROMA_PERSIST_DIR: str = "data/chroma"
     chroma_collection_name: str = "hallucination_detection_evidence"
 
     # --------------------------------------------------------------------- #
-    # Retrieval (Person 2)
+    # Retrieval
     # --------------------------------------------------------------------- #
+
     retrieval_top_k: int = 5
     similarity_score_threshold: float = 0.35
 
     # --------------------------------------------------------------------- #
-    # Verification (Person 2)
+    # Verification
     # --------------------------------------------------------------------- #
+
     verification_support_threshold: float = 0.6
     verification_contradiction_threshold: float = 0.6
 
+    # --------------------------------------------------------------------- #
+    # Resolved filesystem paths
+    # --------------------------------------------------------------------- #
+
     def resolved_upload_dir(self) -> Path:
-        """Return the absolute, filesystem-ready path for uploaded documents."""
+        """
+        Return the absolute filesystem-ready path for uploaded documents.
+        """
         return Path(self.UPLOAD_DIR).resolve()
 
     def resolved_processed_dir(self) -> Path:
-        """Return the absolute, filesystem-ready path for processed artifacts."""
+        """
+        Return the absolute filesystem-ready path for processed artifacts.
+        """
         return Path(self.PROCESSED_DIR).resolve()
 
     def resolved_chroma_persist_dir(self) -> Path:
-        """Return the absolute, filesystem-ready path for ChromaDB persistence."""
+        """
+        Return the absolute filesystem-ready path for persistent ChromaDB.
+        """
         return Path(self.CHROMA_PERSIST_DIR).resolve()
 
+
+# ------------------------------------------------------------------------- #
+# Process-wide settings instance
+# ------------------------------------------------------------------------- #
 
 settings = Settings()
 
@@ -89,8 +125,7 @@ def get_settings() -> Settings:
     """
     Return the process-wide cached Settings instance.
 
-    Follows the same lru_cache-backed singleton pattern already used
-    throughout the codebase so that all services share one settings
-    instance per worker process.
+    All application services use the same Settings instance within a
+    worker process.
     """
     return settings
