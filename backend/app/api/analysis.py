@@ -12,26 +12,28 @@ Pipeline:
         -> Confidence Scoring
         -> Final Verdict
 
-The ResponseAnalyzer is created once per worker process and is wired
-to the application's real Retriever so hallucination detection uses
-the documents indexed in the vector database.
+IMPORTANT FOR RENDER:
+- Heavy ML-related services are NOT imported during application startup.
+- ResponseAnalyzer is imported only when /analyze is actually called.
+- Retriever is imported only when the analyzer is actually created.
+- The ResponseAnalyzer is cached once per worker process.
 """
 
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.api.routes.retrieval import get_retriever
 from app.core.logging import logger
-from app.retrieval.retriever import Retriever
-from app.services.response_analyzer import (
-    ResponseAnalysisError,
-    ResponseAnalyzer,
-)
+
+
+if TYPE_CHECKING:
+    from app.retrieval.retriever import Retriever
+    from app.services.response_analyzer import ResponseAnalyzer
 
 
 __all__ = ["router"]
@@ -124,10 +126,7 @@ class ClaimSummary(BaseModel):
 
 class EvidenceItem(BaseModel):
     """
-    A single piece of retrieved evidence backing (or contradicting) a claim.
-
-    Carries full source attribution and similarity score through to the
-    frontend, rather than collapsing evidence down to bare text.
+    A single piece of retrieved evidence backing or contradicting a claim.
     """
 
     text: str
@@ -195,43 +194,56 @@ class AnalyzeResponse(BaseModel):
 
 
 @lru_cache(maxsize=1)
-def _build_response_analyzer() -> ResponseAnalyzer:
+def _build_response_analyzer() -> "ResponseAnalyzer":
     """
     Create the process-wide ResponseAnalyzer singleton.
 
-    The real application Retriever is injected into ResponseAnalyzer.
+    IMPORTANT:
+    ResponseAnalyzer is imported INSIDE this function so that it is not
+    loaded during FastAPI startup.
 
-    This ensures the hallucination detector uses the same indexed
-    documents/vector database used by the retrieval API.
+    The real application Retriever is injected into ResponseAnalyzer.
     """
 
     logger.info(
         "Initializing ResponseAnalyzer singleton with RAG Retriever."
     )
 
-    # Get the application's shared Retriever.
+    # ------------------------------------------------------------------------
+    # Lazy imports
+    # ------------------------------------------------------------------------
+    #
+    # These imports happen only when /analyze is called for the first time.
+    #
+    from app.retrieval.retriever import Retriever
+    from app.services.response_analyzer import ResponseAnalyzer
+
+    # ------------------------------------------------------------------------
+    # Get the application's shared Retriever
+    # ------------------------------------------------------------------------
+
     retriever: Retriever = get_retriever()
 
-    # Inject the Retriever into ResponseAnalyzer.
-    #
-    # ResponseAnalyzer internally creates:
-    #
-    #     Retriever
-    #         ↓
-    #     _RetrieverEvidenceSource
-    #         ↓
-    #     HallucinationDetector
-    #         ↓
-    #     Evidence-backed claim verification
-    #
-    return ResponseAnalyzer(
+    # ------------------------------------------------------------------------
+    # Create ResponseAnalyzer
+    # ------------------------------------------------------------------------
+
+    analyzer = ResponseAnalyzer(
         retriever=retriever,
     )
 
+    logger.info(
+        "ResponseAnalyzer initialized successfully."
+    )
 
-def get_response_analyzer() -> ResponseAnalyzer:
+    return analyzer
+
+
+def get_response_analyzer() -> "ResponseAnalyzer":
     """
-    FastAPI dependency that returns the shared ResponseAnalyzer.
+    FastAPI dependency that returns the cached ResponseAnalyzer.
+
+    The analyzer is created only when the /analyze endpoint is actually used.
     """
 
     return _build_response_analyzer()
@@ -254,7 +266,7 @@ def get_response_analyzer() -> ResponseAnalyzer:
 )
 def analyze_response(
     payload: AnalyzeRequest,
-    analyzer: ResponseAnalyzer = Depends(
+    analyzer: "ResponseAnalyzer" = Depends(
         get_response_analyzer
     ),
 ) -> AnalyzeResponse:
@@ -284,12 +296,22 @@ def analyze_response(
         )
 
     # ------------------------------------------------------------------------
+    # Lazy import of ResponseAnalysisError
+    # ------------------------------------------------------------------------
+    #
+    # This is deliberately inside the endpoint so importing this API module
+    # does not load ResponseAnalyzer or its heavy dependencies.
+    # ------------------------------------------------------------------------
+
+    from app.services.response_analyzer import ResponseAnalysisError
+
+    # ------------------------------------------------------------------------
     # RUN ANALYSIS
     # ------------------------------------------------------------------------
 
     try:
         analysis = analyzer.analyze(
-            response_text
+            response_text,
         )
 
     except ResponseAnalysisError as exc:
