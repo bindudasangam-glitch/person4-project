@@ -16,7 +16,9 @@ class Settings(BaseSettings):
 
     APP_NAME: str = "Hallucination Detection System"
     APP_VERSION: str = "1.0.0"
-    DEBUG: bool = True
+
+    # Production/deployment mode.
+    DEBUG: bool = False
 
     API_PREFIX: str = "/api/v1"
 
@@ -44,7 +46,9 @@ class Settings(BaseSettings):
     # --------------------------------------------------------------------- #
     embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
     embedding_device: str = "cpu"
-    embedding_batch_size: int = 32
+
+    # Small batch size to reduce peak memory usage on Render Free.
+    embedding_batch_size: int = 4
 
     # --------------------------------------------------------------------- #
     # Vector store / ChromaDB (Person 2)
