@@ -9,7 +9,7 @@ const ANALYZE_URL = `${API_BASE_URL}/api/v1/analyze`;
 
 // How long to wait for /analyze before giving up and telling the user,
 // instead of leaving the button stuck on "Analyzing..." forever.
-const ANALYZE_TIMEOUT_MS = 30_000;
+const ANALYZE_TIMEOUT_MS = 90_000;
 
 function App() {
   const [responseText, setResponseText] = useState("");
