@@ -1,21 +1,25 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from faster_whisper import WhisperModel
 
 
 class SpeechService:
-    """Convert uploaded speech audio into text using local Whisper."""
+    """Convert uploaded speech audio into text using faster-whisper."""
 
     def __init__(self) -> None:
-        # Small model is suitable for local CPU-based development/testing.
-        # The model is downloaded automatically the first time it is used.
-        self.model_name = "base"
+        # Render Free has limited RAM (512 MB).
+        # The tiny model uses significantly less memory than base.
+        self.model_name = os.getenv("WHISPER_MODEL", "tiny")
+
         self.model = WhisperModel(
             self.model_name,
             device="cpu",
             compute_type="int8",
+            cpu_threads=1,
+            num_workers=1,
         )
 
     def transcribe(self, audio_path: str | Path) -> str:
@@ -24,14 +28,21 @@ class SpeechService:
         path = Path(audio_path)
 
         if not path.exists():
-            raise FileNotFoundError(f"Audio file not found: {path}")
+            raise FileNotFoundError(
+                f"Audio file not found: {path}"
+            )
 
         if path.stat().st_size == 0:
-            raise ValueError("Audio file is empty.")
+            raise ValueError(
+                "Audio file is empty."
+            )
 
         segments, _info = self.model.transcribe(
             str(path),
-            beam_size=5,
+            beam_size=1,
+            best_of=1,
+            temperature=0.0,
+            vad_filter=True,
         )
 
         text = " ".join(
@@ -41,6 +52,8 @@ class SpeechService:
         ).strip()
 
         if not text:
-            raise RuntimeError("Local speech-to-text returned an empty transcription.")
+            raise RuntimeError(
+                "Speech-to-text returned an empty transcription."
+            )
 
         return text
